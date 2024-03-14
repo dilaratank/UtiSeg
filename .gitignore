@@ -1,0 +1,6 @@
+/utiseg
+__pycache__
+/slurm_scripts
+/wandb
+/lightning_logs
+model_best*
