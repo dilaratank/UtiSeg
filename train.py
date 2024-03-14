@@ -32,6 +32,7 @@ class Block(nn.Module):
     def forward(self, x):
 
         x = self.relu(self.conv1(x))
+        x = self.relu(self.bn(self.conv2(x)))
         return self.pool(x), x
 
 class UNet(nn.Module):
@@ -59,31 +60,13 @@ class UNet(nn.Module):
         self.conv_last = nn.Conv2d(32, 1, kernel_size=1, stride = 1, padding = 0)
         
     def forward(self, x):
-        print('SHAPE OF X', x.shape)
 
         x, e1 = self.en1(x)
-        print('SHAPE OF X', x.shape)
-        print('SHAPE OF e1', e1.shape)
-        print()
-
         x, e2 = self.en2(x)
-        print('SHAPE OF X', x.shape)
-        print('SHAPE OF e2', e2.shape)
-        print()
-
         x, e3 = self.en3(x)
-        print('SHAPE OF X', x.shape)
-        print('SHAPE OF e3', e3.shape)
-        print()
-
         x, e4 = self.en4(x)
-        print('SHAPE OF X', x.shape)
-        print('SHAPE OF e3', e3.shape)
-        print()
-        
         _, x = self.en5(x)
-        print('SHAPE OF X', x.shape)
-        
+
         x = self.upsample4(x)
         x = torch.cat([x, e4], dim=1)
         _,  x = self.de4(x)
@@ -292,10 +275,11 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--img_size", type=int, default=128, help="Size of the image, must be divisible by 32")
     parser.add_argument("--epochs", type=int, default=10, help="Amount of training epochs")
+    parser.add_argument("--run_name", type=str, help="Name of the wandb run")
 
     args = parser.parse_args()
 
-    wandb_logger = WandbLogger(log_model=True, project='MScUtiSeg')
+    wandb_logger = WandbLogger(log_model=True, project='MScUtiSeg', name=args.run_name)
     wandb_logger.experiment.config.update(vars(args))
 
     trainer = pl.Trainer(

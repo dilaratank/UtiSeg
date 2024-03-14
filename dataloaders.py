@@ -1,6 +1,8 @@
 from datasets import TVUSUterusSegmentationDataset
 from torch.utils.data import DataLoader
 from torchvision import transforms
+import cv2
+import numpy as np
 
 data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
 # data_root_folder = '/home/sandbox/dtank/my-scratch/test_data/'
@@ -8,16 +10,21 @@ data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
 # VIDEO_batch_size = 4
 # VOLUME_batch_size = 4
 
+
 # Transforms
-trans = transforms.Compose([
-    transforms.Grayscale(),
-    transforms.ToTensor()])
+train_trans = transforms.Compose([transforms.Grayscale(),
+                                  transforms.RandomHorizontalFlip(p=0.5),
+                                  transforms.RandomHorizontalFlip(30),
+                                  transforms.ToTensor()])
+
+trans = transforms.Compose([transforms.Grayscale(),
+                            transforms.ToTensor()])
 
 def get_dataloaders(imaging_type, batch_size, img_size):
     if imaging_type == "STILL":
         # STILL #
         # Datasets
-        STILL_train_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/train/', data_root_folder+'mask/train/', 'STILL', resize=img_size, transform=trans)
+        STILL_train_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/train/', data_root_folder+'mask/train/', 'STILL', resize=img_size, transform=train_trans)
         STILL_test_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/test/', data_root_folder+'mask/test/', 'STILL', resize=img_size, transform=trans)
         STILL_val_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/validation/', data_root_folder+'mask/validation/', 'STILL', resize=img_size, transform=trans)
 
