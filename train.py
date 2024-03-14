@@ -99,8 +99,10 @@ class UNETModel(pl.LightningModule):
         self.validation_step_outputs = []
         self.test_step_outputs = []
 
-        self.val_table_data = []
+        self.test_table_imgs = []
+        self.val_table_imgs = []
         self.epoch = 0
+        self.teststep = 0
 
     def forward(self, image):
         # normalize image here
@@ -229,20 +231,36 @@ class UNETModel(pl.LightningModule):
 
         f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="micro")
 
-        self.val_table_data.append([self.epoch, wandb.Image(img), wandb.Image(gt), wandb.Image(pred), f1_score])
+        self.val_table_imgs.append([self.epoch, wandb.Image(img), wandb.Image(gt), wandb.Image(pred), f1_score])
         self.epoch += 1
         return self.shared_epoch_end(self.validation_step_outputs, "valid")
 
     def test_step(self, batch, batch_idx):
-        self.test_step_outputs(self.shared_step(batch, "test")  )
+
+        self.test_step_outputs.append(self.shared_step(batch, "test")  )
+
+        img = self.test_step_outputs[self.teststep]['img']
+        gt = self.test_step_outputs[self.teststep]['gt']
+        pred = self.test_step_outputs[self.teststep]['pred']
+
+        tp = self.test_step_outputs[self.teststep]['tp']
+        fp = self.test_step_outputs[self.teststep]['fp']
+        fn = self.test_step_outputs[self.teststep]['fn']
+        tn = self.test_step_outputs[self.teststep]['tn']
+
+        f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="micro")
+
+        self.test_table_imgs.append([wandb.Image(img), wandb.Image(gt), wandb.Image(pred), f1_score])
+        self.teststep += 1
         return self.shared_step(batch, "test")  
 
     def on_test_epoch_end(self):
+        test_table = wandb.Table(columns=['Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.test_table_imgs)
+        wandb.log({"Test Table": test_table})
         return self.shared_epoch_end(self.test_step_outputs, "test")
     
     def on_train_end(self):
-        print('val table data!:', self.val_table_data)
-        val_table = wandb.Table(columns=['Epoch', 'Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.val_table_data)
+        val_table = wandb.Table(columns=['Epoch', 'Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.val_table_imgs)
         wandb.log({f"{args.imaging_type} Validation Table": val_table})
 
     def configure_optimizers(self):

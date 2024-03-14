@@ -4,3 +4,4 @@ __pycache__
 /wandb
 /lightning_logs
 model_best*
+/artifacts
