@@ -1,11 +1,9 @@
 # Training pipeline copied and adapted from https://www.kaggle.com/code/heiswicked/pytorch-lightning-unet-segmentation-tumour?rvi=1
 
-# from dataloaders import STILL_train_dataloader, STILL_val_dataloader
-from dataloaders import VIDEO_train_dataloader, VIDEO_val_dataloader
-# from dataloaders import STILL_train_dataloader, STILL_val_dataloader
+from dataloaders import get_dataloaders
 
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 import torch
 import torch.nn as nn
@@ -16,6 +14,8 @@ warnings.filterwarnings("ignore")
 import segmentation_models_pytorch as smp
 import wandb
 from pytorch_lightning.loggers import WandbLogger
+
+import argparse
 
 torch.set_float32_matmul_precision('medium')
 
@@ -66,7 +66,7 @@ class UNet(nn.Module):
         x, e3 = self.en3(x)
         x, e4 = self.en4(x)
         _, x = self.en5(x)
-        
+
         x = self.upsample4(x)
         x = torch.cat([x, e4], dim=1)
         _,  x = self.de4(x)
@@ -243,7 +243,7 @@ class UNETModel(pl.LightningModule):
     def on_train_end(self):
         print('val table data!:', self.val_table_data)
         val_table = wandb.Table(columns=['Epoch', 'Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.val_table_data)
-        wandb.log({"Video Validation Table": val_table})
+        wandb.log({f"{args.imaging_type} Validation Table": val_table})
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(), lr=0.0001)
@@ -267,32 +267,47 @@ SWA = pl.callbacks.StochasticWeightAveraging(swa_epoch_start=0.8, swa_lrs=0.001,
 
 model = UNETModel()
 
-wandb_logger = WandbLogger(project='MScUtiSeg')
 
-trainer = pl.Trainer(
-    logger = wandb_logger,
-    max_epochs= 30,
-    callbacks=[checkpoint_callback, early_stop, SWA],
-    accelerator="gpu" if torch.cuda.is_available() else "auto",
-    devices="auto")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
 
-trainer.fit(
-    model, 
-    train_dataloaders = VIDEO_train_dataloader,
-    val_dataloaders = VIDEO_val_dataloader)
+    parser.add_argument("--imaging_type", type=str, help="STILL, VIDEO or, 3D")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
+    parser.add_argument("--img_size", type=int, default=128, help="Size of the image, must be divisible by 32")
+    parser.add_argument("--epochs", type=int, default=10, help="Amount of training epochs")
+    parser.add_argument("--run_name", type=str, help="Name of the wandb run")
 
-# check_path = "/home/sandbox/dtank/my-scratch/MScUtiSeg/model_best.ckpt"
+    args = parser.parse_args()
 
-# model.load_from_checkpoint(check_path)
+    wandb_logger = WandbLogger(log_model=True, project='MScUtiSeg', name=args.run_name)
+    wandb_logger.experiment.config.update(vars(args))
 
-# valid_metrics = trainer.validate(model, dataloaders=STILL_val_dataloader,  ckpt_path=check_path, verbose=True)
-# pprint(valid_metrics)
+    trainer = pl.Trainer(
+        logger = wandb_logger,
+        max_epochs= args.epochs,
+        callbacks=[checkpoint_callback, early_stop, SWA],
+        accelerator="gpu" if torch.cuda.is_available() else "auto",
+        devices="auto")
 
-# test_metrics = trainer.test(model, dataloaders=STILL_test_dataloader, ckpt_path=check_path, verbose=True)
-# pprint(test_metrics)
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size)
+
+    trainer.fit(
+        model, 
+        train_dataloaders = train_dataloader,
+        val_dataloaders = val_dataloader)
+
+    # check_path = "/home/sandbox/dtank/my-scratch/MScUtiSeg/model_best.ckpt"
+
+    # model.load_from_checkpoint(check_path)
+
+    # valid_metrics = trainer.validate(model, dataloaders=STILL_val_dataloader,  ckpt_path=check_path, verbose=True)
+    # pprint(valid_metrics)
+
+    # test_metrics = trainer.test(model, dataloaders=STILL_test_dataloader, ckpt_path=check_path, verbose=True)
+    # pprint(test_metrics)
 
 
-        
+            
 
 
 
