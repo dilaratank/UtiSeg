@@ -32,6 +32,7 @@ class Block(nn.Module):
     def forward(self, x):
 
         x = self.relu(self.conv1(x))
+        x = self.relu(self.bn(self.conv2(x)))
         return self.pool(x), x
 
 class UNet(nn.Module):
