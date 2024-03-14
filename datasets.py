@@ -7,7 +7,7 @@ from PIL import Image
 import torchvision.transforms as tf
 
 class TVUSUterusSegmentationDataset(Dataset):
-    def __init__(self, data_folder, mask_folder, data_type, transform=None):
+    def __init__(self, data_folder, mask_folder, data_type, resize=128, transform=None):
         self.data_folder = data_folder
         self.mask_folder = mask_folder
         self.data_type = data_type
@@ -15,6 +15,8 @@ class TVUSUterusSegmentationDataset(Dataset):
 
         self.image_list = self.get_imgs_list(self.data_folder)
         self.mask_list = self.get_imgs_list(self.mask_folder)
+
+        self.resize = resize
         
     def get_imgs_list(self, root_folder):
         image_paths = []
@@ -39,8 +41,8 @@ class TVUSUterusSegmentationDataset(Dataset):
         image = Image.open(self.image_list[index])
         mask = Image.open(self.mask_list[index])
 
-        image = image.resize((64, 64))
-        mask = mask.resize((64, 64))
+        image = image.resize((self.resize, self.resize))
+        mask = mask.resize((self.resize, self.resize))
 
         # image.show()
         # mask.show()
