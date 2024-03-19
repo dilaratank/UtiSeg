@@ -14,7 +14,7 @@ data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
 # Transforms
 train_trans = transforms.Compose([transforms.Grayscale(),
                                   transforms.RandomHorizontalFlip(p=0.5),
-                                  transforms.RandomHorizontalFlip(30),
+                                  transforms.RandomRotation(30),
                                   transforms.ToTensor()])
 
 trans = transforms.Compose([transforms.Grayscale(),
