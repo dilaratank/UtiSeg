@@ -3,16 +3,19 @@ import torch
 import pandas as pd
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
-from PIL import Image 
+from PIL import Image, ImageOps
 import torchvision.transforms as tf
 import cv2
+import torch.nn.functional as F
 
 class TVUSUterusSegmentationDataset(Dataset):
-    def __init__(self, data_folder, mask_folder, data_type, resize=128, transform=None):
+    def __init__(self, data_folder, mask_folder, data_type, resize=128, clahe=False, padding=False, transform=None):
         self.data_folder = data_folder
         self.mask_folder = mask_folder
         self.data_type = data_type
         self.transf = transform 
+        self.clahe = clahe
+        self.padding = padding
 
         self.image_list = self.get_imgs_list(self.data_folder)
         self.mask_list = self.get_imgs_list(self.mask_folder)
@@ -42,18 +45,21 @@ class TVUSUterusSegmentationDataset(Dataset):
         image = Image.open(self.image_list[index])
         mask = Image.open(self.mask_list[index])
 
-        image = image.resize((self.resize, self.resize))
-        mask = mask.resize((self.resize, self.resize))
+        if self.padding:
+            image = ImageOps.pad(image, (self.resize, self.resize), method=Image.BOX)
+            mask = ImageOps.pad(mask, (self.resize, self.resize), method=Image.BOX)
+        else:
+            image = image.resize((self.resize, self.resize))
+            mask = mask.resize((self.resize, self.resize))
 
-        # image.show()
-
-        # clahe
-        image = np.array(image)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        image[:,:,0] = clahe.apply(image[:,:,0])
-        image = cv2.cvtColor(image, cv2.COLOR_LAB2RGB)
-        image = Image.fromarray(image)
+        if self.clahe:
+            # clahe
+            image = np.array(image)
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            image[:,:,0] = clahe.apply(image[:,:,0])
+            image = cv2.cvtColor(image, cv2.COLOR_LAB2RGB)
+            image = Image.fromarray(image)
 
         # image.show()
         # mask.show()
