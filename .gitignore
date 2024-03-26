@@ -5,3 +5,4 @@ __pycache__
 /lightning_logs
 model_best*
 /artifacts
+MScUtiSeg/

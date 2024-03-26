@@ -1,331 +1,219 @@
-# Training pipeline copied and adapted from https://www.kaggle.com/code/heiswicked/pytorch-lightning-unet-segmentation-tumour?rvi=1
+'''
+Code copied from Notebook provided by pracitcal.
+We replaces the tensorboard logger with the wandb logger.
+'''
+import pytorch_lightning as pl
+from pytorch_lightning.loggers import WandbLogger
+import torch
+import argparse
+import os
+
+import torch
+import torchmetrics
+import torch.nn.functional as F
+
+import pytorch_lightning as pl
 
 from dataloaders import get_dataloaders
 
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-
-import torch
-import torch.nn as nn
-
-import warnings
-warnings.filterwarnings("ignore")
-
 import segmentation_models_pytorch as smp
-import wandb
-from pytorch_lightning.loggers import WandbLogger
-
-import argparse
-
-torch.set_float32_matmul_precision('medium')
-
-class Block(nn.Module):
-    def __init__(self, inputs = 1, middles = 32, outs = 32):
-        super().__init__()
-        
-        self.conv1 = nn.Conv2d(inputs, middles, 3, 1, 1)
-        self.conv2 = nn.Conv2d(middles, outs, 3, 1, 1)
-        self.relu = nn.ReLU()
-        self.bn = nn.BatchNorm2d(outs)
-        self.pool = nn.MaxPool2d(2, 2)
-        
-    def forward(self, x):
-
-        x = self.relu(self.conv1(x))
-        x = self.relu(self.bn(self.conv2(x)))
-        return self.pool(x), x
-
-class UNet(nn.Module):
-    def __init__(self,):
-        super().__init__()
-
-        self.en1 = Block(1, 32, 32)
-        self.en2 = Block(32, 64, 64)
-        self.en3 = Block(64, 128, 128)
-        self.en4 = Block(128, 256, 256)
-        self.en5 = Block(256, 512, 256)
-        
-        self.upsample4 = nn.ConvTranspose2d(256, 256, 2, stride = 2)
-        self.de4 = Block(512, 256, 128)
-        
-        self.upsample3 = nn.ConvTranspose2d(128, 128, 2, stride = 2)
-        self.de3 = Block(256, 128, 64)
-        
-        self.upsample2 = nn.ConvTranspose2d(64, 64, 2, stride = 2)
-        self.de2 = Block(128, 64, 32)
-        
-        self.upsample1 = nn.ConvTranspose2d(32, 32, 2, stride = 2)
-        self.de1 = Block(64, 32, 32)
-        
-        self.conv_last = nn.Conv2d(32, 1, kernel_size=1, stride = 1, padding = 0)
-        
-    def forward(self, x):
-
-        x, e1 = self.en1(x)
-        x, e2 = self.en2(x)
-        x, e3 = self.en3(x)
-        x, e4 = self.en4(x)
-        _, x = self.en5(x)
-
-        x = self.upsample4(x)
-        x = torch.cat([x, e4], dim=1)
-        _,  x = self.de4(x)
-        
-        x = self.upsample3(x)
-        x = torch.cat([x, e3], dim=1)
-        _, x = self.de3(x)
-        
-        x = self.upsample2(x)
-        x = torch.cat([x, e2], dim=1)
-        _, x = self.de2(x)
-        
-        x = self.upsample1(x)
-        x = torch.cat([x, e1], dim=1)
-        _, x = self.de1(x)
-
-        x = self.conv_last(x)     
-        return x
-    
-class UNETModel(pl.LightningModule):
-
-    def __init__(self,):
-        super().__init__()
-        self.model = UNet()
-
-        # for image segmentation dice loss could be the best first choice
-        self.loss_fn = smp.losses.DiceLoss(smp.losses.BINARY_MODE, from_logits=True)
-
-        self.train_step_outputs = []
-        self.validation_step_outputs = []
-        self.test_step_outputs = []
-
-        self.test_table_imgs = []
-        self.val_table_imgs = []
-        self.epoch = 0
-        self.teststep = 0
-
-    def forward(self, image):
-        # normalize image here
-        # image = (image - self.mean) / self.std
-        mask = self.model(image)
-        return mask
-
-    def shared_step(self, batch, stage):
-        
-        image = batch[0]
-
-        # Shape of the image should be (batch_size, num_channels, height, width)
-        # if you work with grayscale images, expand channels dim to have [batch_size, 1, height, width]
-        assert image.ndim == 4
-
-        # Check that image dimensions are divisible by 32, 
-        # encoder and decoder connected by `skip connections` and usually encoder have 5 stages of 
-        # downsampling by factor 2 (2 ^ 5 = 32); e.g. if we have image with shape 65x65 we will have 
-        # following shapes of features in encoder and decoder: 84, 42, 21, 10, 5 -> 5, 10, 20, 40, 80
-        # and we will get an error trying to concat these features
-        h, w = image.shape[2:]
-        assert h % 32 == 0 and w % 32 == 0
-
-        mask = batch[1]
-
-        # Shape of the mask should be [batch_size, num_classes, height, width]
-        # for binary segmentation num_classes = 1
-        assert mask.ndim == 4
-
-        # Check that mask values in between 0 and 1, NOT 0 and 255 for binary segmentation
-        assert mask.max() <= 1.0 and mask.min() >= 0
-
-        logits_mask = self.forward(image)
-        
-        # Predicted mask contains logits, and loss_fn param `from_logits` is set to True
-        loss = self.loss_fn(logits_mask, mask)
-
-        # Lets compute metrics for some threshold
-        # first convert mask values to probabilities, then 
-        # apply thresholding
-        prob_mask = logits_mask.sigmoid()
-        pred_mask = (prob_mask > 0.5).float()
-
-        # We will compute IoU metric by two ways
-        #   1. dataset-wise
-        #   2. image-wise
-        # but for now we just compute true positive, false positive, false negative and
-        # true negative 'pixels' for each image and class
-        # these values will be aggregated in the end of an epoch
-        tp, fp, fn, tn = smp.metrics.get_stats(pred_mask.long(), mask.long(), mode="binary")
-        
-        return {
-            "loss": loss,
-            "tp": tp,
-            "fp": fp,
-            "fn": fn,
-            "tn": tn,
-            "img": image,
-            "gt": mask,
-            "pred": pred_mask,
-        }
-
-    def shared_epoch_end(self, outputs, stage):
-        # aggregate step metics
-        tp = torch.cat([x["tp"] for x in outputs])
-        fp = torch.cat([x["fp"] for x in outputs])
-        fn = torch.cat([x["fn"] for x in outputs])
-        tn = torch.cat([x["tn"] for x in outputs])
-        
-        total_loss = 0
-        iter_count = len(outputs)
-    
-        for idx in range(iter_count):
-            total_loss += outputs[idx]['loss'].item()
-
-        # per image IoU means that we first calculate IoU score for each image 
-        # and then compute mean over these scores
-        per_image_iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise")
-        
-        # dataset IoU means that we aggregate intersection and union over whole dataset
-        # and then compute IoU score. The difference between dataset_iou and per_image_iou scores
-        # in this particular case will not be much, however for dataset 
-        # with "empty" images (images without target class) a large gap could be observed. 
-        # Empty images influence a lot on per_image_iou and much less on dataset_iou.
-        dataset_iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro")
-        
-        recall = smp.metrics.recall(tp, fp, fn, tn, reduction="micro")
-        precision = smp.metrics.precision(tp, fp, fn, tn, reduction="micro")
-        
-        f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="micro")
-        accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction="macro")
-        
-        metrics = {
-            f"{stage}/loss": total_loss/iter_count,
-            f"{stage}/precision": precision,
-            f"{stage}/recall": recall,
-            f"{stage}/accuracy": accuracy,
-            f"{stage}/f1_score": f1_score,
-            f"{stage}/per_image_iou": per_image_iou,
-            f"{stage}/dataset_iou": dataset_iou,
-        }
-        
-        self.log_dict(metrics, prog_bar=True)
-
-
-    def training_step(self, batch, batch_idx):
-        self.train_step_outputs.append(self.shared_step(batch, "train"))
-        return self.shared_step(batch, "train")            
-
-    def on_train_epoch_end(self):
-        return self.shared_epoch_end(self.train_step_outputs, "train")
-
-    def validation_step(self, batch, batch_idx):
-        self.validation_step_outputs.append(self.shared_step(batch, "valid"))
-        return self.shared_step(batch, "valid")
-
-    def on_validation_epoch_end(self):
-        img = self.validation_step_outputs[self.epoch]['img']
-        gt = self.validation_step_outputs[self.epoch]['gt']
-        pred = self.validation_step_outputs[self.epoch]['pred']
-
-        tp = self.validation_step_outputs[self.epoch]['tp']
-        fp = self.validation_step_outputs[self.epoch]['fp']
-        fn = self.validation_step_outputs[self.epoch]['fn']
-        tn = self.validation_step_outputs[self.epoch]['tn']
-
-        f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="micro")
-
-        self.val_table_imgs.append([self.epoch, wandb.Image(img), wandb.Image(gt), wandb.Image(pred), f1_score])
-        self.epoch += 1
-        return self.shared_epoch_end(self.validation_step_outputs, "valid")
-
-    def test_step(self, batch, batch_idx):
-
-        self.test_step_outputs.append(self.shared_step(batch, "test")  )
-
-        img = self.test_step_outputs[self.teststep]['img']
-        gt = self.test_step_outputs[self.teststep]['gt']
-        pred = self.test_step_outputs[self.teststep]['pred']
-
-        tp = self.test_step_outputs[self.teststep]['tp']
-        fp = self.test_step_outputs[self.teststep]['fp']
-        fn = self.test_step_outputs[self.teststep]['fn']
-        tn = self.test_step_outputs[self.teststep]['tn']
-
-        f1_score = smp.metrics.f1_score(tp, fp, fn, tn, reduction="micro")
-
-        self.test_table_imgs.append([wandb.Image(img), wandb.Image(gt), wandb.Image(pred), f1_score])
-        self.teststep += 1
-        return self.shared_step(batch, "test")  
-
-    def on_test_epoch_end(self):
-        test_table = wandb.Table(columns=['Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.test_table_imgs)
-        wandb.log({"Test Table": test_table})
-        return self.shared_epoch_end(self.test_step_outputs, "test")
-    
-    def on_train_end(self):
-        val_table = wandb.Table(columns=['Epoch', 'Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.val_table_imgs)
-        wandb.log({f"{args.imaging_type} Validation Table": val_table})
-
-    def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=0.0001)
-
-pl.seed_everything(2022)
-
-# Model Checkpoint Setting
-checkpoint_callback = ModelCheckpoint(monitor = "valid/f1_score", mode= 'max',
-                                      filename= "model_best",
-                                      dirpath ='./',
-                                      save_top_k = 1, 
-                                      save_weights_only=True
-                                    )
-
-# Early Stopping 
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
-early_stop = EarlyStopping(monitor= "valid/f1_score", min_delta=0.00, patience = 20, verbose=True, mode="max")
+import wandb
 
-## Scheduler
-SWA = pl.callbacks.StochasticWeightAveraging(swa_epoch_start=0.8, swa_lrs=0.001, annealing_epochs=5, annealing_strategy='cos')
+'''
+Code copied from Notebook provided by pracitcal.
+'''
+import torch 
+import torch.nn.functional as F
 
-model = UNETModel()
+def conv3x3_bn(ci, co):
+  return torch.nn.Sequential(torch.nn.Conv2d(ci, co, 3, padding=1), torch.nn.BatchNorm2d(co), torch.nn.ReLU(inplace=True))
 
+def encoder_conv(ci, co):
+  return torch.nn.Sequential(torch.nn.MaxPool2d(2), conv3x3_bn(ci, co), conv3x3_bn(co, co))
+
+class deconv(torch.nn.Module):
+  def __init__(self, ci, co):
+    super(deconv, self).__init__()
+    self.upsample = torch.nn.ConvTranspose2d(ci, co, 2, stride=2)
+    self.conv1 = conv3x3_bn(ci, co)
+    self.conv2 = conv3x3_bn(co, co)
+
+  def forward(self, x1, x2):
+    x1 = self.upsample(x1)
+    diffX = x2.size()[2] - x1.size()[2]
+    diffY = x2.size()[3] - x1.size()[3]
+    x1 = F.pad(x1, (diffX, 0, diffY, 0))
+    # concatenating tensors
+    x = torch.cat([x2, x1], dim=1)
+    x = self.conv1(x)
+    x = self.conv2(x)
+    return x
+
+class UNet(torch.nn.Module):
+  def __init__(self, n_classes=1, in_ch=1):
+    super().__init__()
+
+    # number of filter's list for each expanding and respecting contracting layer
+    c = [16, 32, 64, 128]
+
+    # first convolution layer receiving the image
+    self.conv1 = torch.nn.Sequential(conv3x3_bn(in_ch, c[0]),
+                                     conv3x3_bn(c[0], c[0]))
+
+    # encoder layers
+    self.conv2 = encoder_conv(c[0], c[1])
+    self.conv3 = encoder_conv(c[1], c[2])
+    self.conv4 = encoder_conv(c[2], c[3])
+
+    # decoder layers
+    self.deconv1 = deconv(c[3],c[2])
+    self.deconv2 = deconv(c[2],c[1])
+    self.deconv3 = deconv(c[1],c[0])
+
+    # last layer returning the output
+    self.out = torch.nn.Conv2d(c[0], n_classes, 3, padding=1)
+
+  def forward(self, x):
+    # encoder
+    x1 = self.conv1(x)
+    x2 = self.conv2(x1)
+    x3 = self.conv3(x2)
+    x = self.conv4(x3)
+    # decoder
+    x = self.deconv1(x, x3)
+    x = self.deconv2(x, x2)
+    x = self.deconv3(x, x1)
+    x = self.out(x)
+    return x
+
+def get_config(args):
+    config_segm = {
+        'batch_size'     : args.batch_size,
+        'optimizer_lr'   : args.optimizer_lr,
+        'max_epochs'     : args.epochs,
+        'model_name'     : 'unet',
+        'optimizer_name' : 'adam',
+        'bin'            : 'segm_models/',
+        'experiment_name': 'unet'
+    }
+    return config_segm
+
+models     = {'unet'      : UNet}
+
+optimizers = {'adam'      : torch.optim.Adam,
+              'sgd'       : torch.optim.SGD }
+
+metrics    = {'acc'       : torchmetrics.Accuracy(task='binary').to('cuda'),
+              'f1'        : torchmetrics.F1Score(task='binary').to('cuda'),
+              'precision' : torchmetrics.Precision(task='binary').to('cuda'),
+              'recall'    : torchmetrics.Recall(task='binary').to('cuda')}
+
+class Segmenter(pl.LightningModule):
+  def __init__(self, *args):
+    super().__init__()
+
+    # defining model
+    self.model_name = config_segm['model_name']
+    assert self.model_name in models, f'Model name "{self.model_name}" is not available. List of available names: {list(models.keys())}'
+    self.model      = models[self.model_name]().to('cuda')
+
+    # assigning optimizer values
+    self.optimizer_name = config_segm['optimizer_name']
+    self.lr             = config_segm['optimizer_lr']
+
+    # definfing loss function
+    self.loss_fn = smp.losses.DiceLoss(smp.losses.BINARY_MODE, from_logits=True)
+
+    self.val_table_data = []
+    self.epoch = 0
+
+  def step(self, batch, nn_set):
+    X, y = batch
+    X, y   = X.float().to('cuda'), y.to('cuda').float()
+    y_hat  = self.model(X)
+    y_prob = torch.sigmoid(y_hat)
+
+    # pos_weight = torch.tensor([config_segm['loss_pos_weight']]).float().to('cuda')
+    #loss = F.binary_cross_entropy_with_logits(y, y_prob, pos_weight=pos_weight)
+    # loss = F.binary_cross_entropy_with_logits(y_hat, y.float())#, pos_weight=pos_weight)
+    loss = self.loss_fn(y_hat, y)
+    
+    self.log(f"{nn_set}/loss", loss, on_step=False, on_epoch=True)
+
+    for i, (metric_name, metric_fn) in enumerate(metrics.items()):
+      score = metric_fn(y_prob, y.int())
+      self.log(f'{nn_set}/{metric_name}', score, on_step=False, on_epoch=True)
+
+    if nn_set == "val" and self.epoch % 10 == 0:
+      print(f'saving a row of images on epoch {self.epoch}')
+      img = batch[0][0].cpu()
+      gt = batch[1][0].cpu()
+      pred = y_prob[0].cpu()
+      f1score = metrics['f1'](pred, gt.int())
+      self.val_table_data.append([wandb.Image(img), wandb.Image(gt), wandb.Image(pred), f1score])
+
+    del X, y_hat, batch
+    return loss
+
+  def training_step(self, batch, batch_idx):
+    return {"loss": self.step(batch, "train")}
+
+  def validation_step(self, batch, batch_idx):
+    return {"val_loss": self.step(batch, "val")}
+  
+  def on_validation_epoch_end(self):
+    self.epoch += 1
+
+  def test_step(self, batch, batch_idx):
+    return {"test_loss": self.step(batch, "test")}
+  
+  def on_train_end(self):
+    val_table = wandb.Table(columns=['Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.val_table_data)
+    wandb.log({f"{args.run_name} Validation Table": val_table})
+
+  def forward(self, X):
+    return self.model(X)
+
+  def configure_optimizers(self):
+    assert self.optimizer_name in optimizers, f'Optimizer name "{self.optimizer_name}" is not available. List of available names: {list(models.keys())}'
+    return optimizers[self.optimizer_name](self.parameters(), lr = self.lr)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training. Default: 32")
+    parser.add_argument("--optimizer_lr", type=float, default=0.1, help="Learning rate for training. Default: 0.01")
     parser.add_argument("--imaging_type", type=str, help="STILL, VIDEO or, 3D")
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--img_size", type=int, default=128, help="Size of the image, must be divisible by 32")
-    parser.add_argument("--epochs", type=int, default=10, help="Amount of training epochs")
+    parser.add_argument("--epochs", type=int, default=10, help="Amount of training epochs. Default: 10")
     parser.add_argument("--run_name", type=str, help="Name of the wandb run")
+    parser.add_argument("--clahe", action="store_true", default=False, help="Whether to apply a CLAHE transformation to the images. Default False")
+    parser.add_argument("--augmentations", action="store_true", default=False, help="Whether to apply general augmentations to the images. Default False")
+    parser.add_argument("--padding", action="store_true", default=False, help="Whether to apply a padding to the images. Default False")
+    # parser.add_argument("--loss_pos_weight", type=int, default=2, help=". Default 2")
 
     args = parser.parse_args()
 
+    config_segm = get_config(args)
+
     wandb_logger = WandbLogger(log_model=True, project='MScUtiSeg', name=args.run_name)
-    wandb_logger.experiment.config.update(vars(args))
+    wandb_logger.experiment.config.update(config_segm)
 
-    trainer = pl.Trainer(
-        logger = wandb_logger,
-        max_epochs= args.epochs,
-        callbacks=[checkpoint_callback, early_stop, SWA],
-        accelerator="gpu" if torch.cuda.is_available() else "auto",
-        devices="auto")
+    torch.manual_seed(42)
+    torch.backends.cudnn.benchmark = True
 
-    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size)
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size, args.clahe, args.padding, args.augmentations)
 
-    trainer.fit(
-        model, 
-        train_dataloaders = train_dataloader,
-        val_dataloaders = val_dataloader)
-
-    # check_path = "/home/sandbox/dtank/my-scratch/MScUtiSeg/model_best.ckpt"
-
-    # model.load_from_checkpoint(check_path)
-
-    # valid_metrics = trainer.validate(model, dataloaders=STILL_val_dataloader,  ckpt_path=check_path, verbose=True)
-    # pprint(valid_metrics)
-
-    # test_metrics = trainer.test(model, dataloaders=STILL_test_dataloader, ckpt_path=check_path, verbose=True)
-    # pprint(test_metrics)
-
-
-            
-
-
-
+    segmenter           = Segmenter(config_segm)
+    logger              = wandb_logger
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor='val/f1', mode='max')
+    early_stop          = EarlyStopping(monitor= "val/f1", min_delta=0.00, patience = 20, verbose=True, mode="max")
+    SWA                 = pl.callbacks.StochasticWeightAveraging(swa_epoch_start=0.8, swa_lrs=0.001, annealing_epochs=5, annealing_strategy='cos')
+    trainer             = pl.Trainer(devices=1, accelerator='gpu', max_epochs=config_segm['max_epochs'],
+                                    logger=logger, callbacks=[checkpoint_callback, early_stop, SWA],
+                                    default_root_dir=config_segm['bin'], deterministic=True,
+                                    log_every_n_steps=1)
+    trainer.fit(segmenter, 
+                train_dataloaders=train_dataloader, 
+                val_dataloaders=val_dataloader)
