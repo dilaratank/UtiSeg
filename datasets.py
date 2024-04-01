@@ -56,7 +56,7 @@ class TVUSUterusSegmentationDataset(Dataset):
             # clahe
             image = np.array(image)
             image = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+            clahe = cv2.createCLAHE(clipLimit=1, tileGridSize=(8,8))
             image[:,:,0] = clahe.apply(image[:,:,0])
             image = cv2.cvtColor(image, cv2.COLOR_LAB2RGB)
             image = Image.fromarray(image)

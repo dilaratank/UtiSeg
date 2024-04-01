@@ -113,6 +113,14 @@ class Segmenter(pl.LightningModule):
   def __init__(self, *args):
     super().__init__()
 
+    if not args:
+      config_segm = {}
+      config_segm['model_name'] = 'unet'
+      config_segm['optimizer_name'] = 'adam'
+      config_segm['optimizer_lr'] = 0.1
+    else:
+      config_segm = args[0]
+
     # defining model
     self.model_name = config_segm['model_name']
     assert self.model_name in models, f'Model name "{self.model_name}" is not available. List of available names: {list(models.keys())}'
@@ -189,7 +197,8 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=10, help="Amount of training epochs. Default: 10")
     parser.add_argument("--run_name", type=str, help="Name of the wandb run")
     parser.add_argument("--clahe", action="store_true", default=False, help="Whether to apply a CLAHE transformation to the images. Default False")
-    parser.add_argument("--augmentations", action="store_true", default=False, help="Whether to apply general augmentations to the images. Default False")
+    parser.add_argument("--gaussian_blur", action="store_true", default=False, help="Whether to apply a CLAHE transformation to the images. Default False")
+    parser.add_argument("--random_rotation", action="store_true", default=False, help="Whether to apply general augmentations to the images. Default False")
     parser.add_argument("--padding", action="store_true", default=False, help="Whether to apply a padding to the images. Default False")
     # parser.add_argument("--loss_pos_weight", type=int, default=2, help=". Default 2")
 
@@ -203,7 +212,7 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     torch.backends.cudnn.benchmark = True
 
-    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size, args.clahe, args.padding, args.augmentations)
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size, args.clahe, args.padding, args.random_rotation, args.gaussian_blur)
 
     segmenter           = Segmenter(config_segm)
     logger              = wandb_logger
@@ -217,3 +226,4 @@ if __name__ == "__main__":
     trainer.fit(segmenter, 
                 train_dataloaders=train_dataloader, 
                 val_dataloaders=val_dataloader)
+    
