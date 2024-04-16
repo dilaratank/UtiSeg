@@ -4,6 +4,7 @@ import shutil
 from datasets import TVUSUterusSegmentationDataset
 from torch.utils.data import DataLoader
 from torchvision import transforms
+from sklearn.model_selection import train_test_split
 
 data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
 
@@ -52,35 +53,74 @@ def split_data(input_folder, train_folder, test_folder, validation_folder, train
 # split_data(input_folder, train_folder, test_folder, validation_folder)
 # print('done dividing train, test, and validation sets.')
 
-def get_mean_std(loader):
-    # Compute the mean and standard deviation of all pixels in the dataset
-    num_pixels = 0
-    mean = 0.0
-    std = 0.0
-    for images, _ in loader:
-        batch_size, num_channels, height, width = images.shape
-        num_pixels += batch_size * height * width
-        mean += images.mean(axis=(0, 2, 3)).sum()
-        std += images.std(axis=(0, 2, 3)).sum()
+import os
+import shutil
+from sklearn.model_selection import KFold
 
-    mean /= num_pixels
-    std /= num_pixels
+def split_data_crossvalidation(folder_path, destination_folder_path):
 
-    return mean, std
+    # Get the list of patient number folders
+    patient_folders = os.listdir(folder_path)
 
+    # Define the number of folds (5-fold cross-validation)
+    num_folds = 5
 
-def return_mean_std(imaging_type):
-    if imaging_type == "STILL":
-        trans = transforms.Compose([transforms.Grayscale(),
-                                    transforms.ToTensor()])
+    # Initialize KFold splitter
+    kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
 
-        img_size = 256
-        clahe = False
-        padding = False
-        batch_size = 8
+    # Function to move folders from one location to another
+    def move_folders(folders, destination):
+        for folder in folders:
+            src = os.path.join(folder_path, folder)
+            dest = os.path.join(destination, folder)
+            shutil.copytree(src, dest)
 
-        STILL_train_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/train/', data_root_folder+'mask/train/', 'STILL', resize=img_size, clahe=clahe, padding=padding, transform=trans)
-        STILL_train_dataloader = DataLoader(STILL_train_dataset, batch_size=batch_size, shuffle=True)        
+    # Iterate through the folds
+    for fold_idx, (train_index, test_index) in enumerate(kf.split(patient_folders)):
+        # Assign the fold to train, test, and validation sets
+        train_set = [patient_folders[i] for i in train_index]
+        test_set = [patient_folders[i] for i in test_index]
+        
+        train_set, val_set = train_test_split(train_set, test_size=0.1, random_state=42)
 
-        mean, std = get_mean_std(STILL_train_dataloader)
-        return mean, std
+        # Define directory paths for train, test, and validation sets
+        train_fold_dir = os.path.join(destination_folder_path, f"fold_{fold_idx+1}", "original", "train")
+        test_fold_dir = os.path.join(destination_folder_path, f"fold_{fold_idx+1}", "original", "test")
+        val_fold_dir = os.path.join(destination_folder_path, f"fold_{fold_idx+1}", "original", "validation")
+
+        # Create directories if they don't exist
+        os.makedirs(train_fold_dir, exist_ok=True)
+        os.makedirs(test_fold_dir, exist_ok=True)
+        os.makedirs(val_fold_dir, exist_ok=True)
+
+        # Move patient folders to train, test, and validation directories
+        move_folders(train_set, train_fold_dir)
+        move_folders(test_set, test_fold_dir)
+        move_folders(val_set, val_fold_dir)
+
+    print("Dataset created successfully.")
+
+# split_data_crossvalidation("/home/sandbox/dtank/my-scratch/data/mask/UTISEG-DATA-ANNOTATED-MASK-ANONIEM/", "/home/sandbox/dtank/my-scratch/data/crossvalidation")
+# split_data_crossvalidation("/home/sandbox/dtank/my-scratch/data/original/UTISEG-DATA-ANONIEM/", "/home/sandbox/dtank/my-scratch/data/crossvalidation")
+
+import os
+from collections import defaultdict
+
+def count_image_types(root_dir):
+    image_types = defaultdict(int)
+    for root, dirs, files in os.walk(root_dir):
+        for file in files:
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
+                _, ext = os.path.splitext(file)
+                image_types[ext.lower()] += 1
+    return image_types
+
+def main():
+    root_folder = '/home/sandbox/dtank/my-scratch/data/original/validation/'  # Update this with your actual folder path
+    for patient_folder in os.listdir(root_folder):
+        if os.path.isdir(os.path.join(root_folder, patient_folder)):
+            images_count = count_image_types(os.path.join(root_folder, patient_folder, '3D'))
+            print(f"Patient {patient_folder}: {images_count}")
+
+if __name__ == "__main__":
+    main()

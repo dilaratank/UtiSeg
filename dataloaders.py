@@ -4,7 +4,7 @@ from torchvision import transforms
 import cv2
 import numpy as np
 import torch
-from helper import return_mean_std
+# from helper import return_mean_std
 
 data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
 # data_root_folder = '/home/sandbox/dtank/my-scratch/test_data/'
