@@ -1,15 +1,27 @@
+"""
+dataloaders.py
+
+Prepares a function that returns a TVUS dataset based on certain parameters.
+The dataset can be used to train a U-Net Segmentation model. 
+"""
+
 from datasets import TVUSUterusSegmentationDataset
 from torch.utils.data import DataLoader
 from torchvision import transforms
-import cv2
-import numpy as np
 import torch
-# from helper import return_mean_std
-
-data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
-# data_root_folder = '/home/sandbox/dtank/my-scratch/test_data/'
 
 class NonRandomHorizontalFlip:
+    """
+    A class that can be used to horizontally flip 50% of the dataset.
+
+    Parameters
+    ----------
+    flip_probability: How much, in terms of percentage, of the data that will be flipped
+
+    Returns
+    -------
+    sample: A horizontally flipped TVUS image
+    """
     def __init__(self, flip_probability=0.5):
         self.flip_probability = flip_probability
 
@@ -18,23 +30,33 @@ class NonRandomHorizontalFlip:
             # Flip the image horizontally
             sample = torch.flip(sample, dims=[-1])
         return sample
-    
-class NonRandomHorizontalFlip:
-    def __init__(self, flip_probability=0.5):
-        self.flip_probability = flip_probability
 
-    def __call__(self, sample):
-        if torch.rand(1).item() < self.flip_probability:
-            # Flip the image horizontally
-            sample = torch.flip(sample, dims=[-1])
-        return sample
-
-
+# Prepare list of transformations based on split
 train_trans = transforms.Compose([transforms.Grayscale()])
 val_test_trans = transforms.Compose([transforms.Grayscale()])
 
 def get_dataloaders(imaging_type, batch_size, img_size, clahe=False, padding=False, random_rotation=False, gaussian_blur=False, f=None):
+    """
+    A function that returns a TVUS segmentation dataset based on cetrain parameters.
 
+    Parameters
+    ----------
+    imaging_type: type of the image in the dataset, can be still, video, 3D, or all.
+    batch_size: batch size of the dataset
+    img_size: image resolution, for example 256 would be a resolution of 256x256
+    clahe: if CLAHE is applied to the data or not
+    padding: if padding is applied to the data or not
+    randomm_rotationn: if random rotation is applied to to the data or not
+    gaussian_blur: if gaussian blur is applied to the data or not
+    f: which fold should be trained on, if doing cross validation training
+
+
+    Returns
+    -------
+    A TVUS segmentation dataset
+    """
+
+    #  Prepare further list of transformations based on function parameters
     if f != None:
         data_root_folder = f"/home/sandbox/dtank/my-scratch/data/crossvalidation/new/fold_{f}/"
     else:
@@ -50,6 +72,7 @@ def get_dataloaders(imaging_type, batch_size, img_size, clahe=False, padding=Fal
     train_trans.transforms.append(transforms.ToTensor())
     val_test_trans.transforms.append(transforms.ToTensor())
 
+    # Prepare datasets based on imaging types and other function parameters
     if imaging_type == "STILL":
         # STILL #
         # Datasets
