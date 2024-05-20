@@ -1,12 +1,15 @@
 '''
-Code copied from Notebook provided by pracitcal.
-We replaces the tensorboard logger with the wandb logger.
+train.py
+
+A script to train a U-Net model using the pytorch lightning framework and wandb logger
+
+The code is copied and adapted from a Notebook provided by the course Medical AI (2023/2024) 
+in the second year MSc program Medical Informatics, University of Amsterdam 
 '''
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import WandbLogger
 import torch
 import argparse
-import os
 
 import torch
 import torchmetrics
@@ -20,19 +23,19 @@ import segmentation_models_pytorch as smp
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 import wandb
 
-'''
-Code copied from Notebook provided by pracitcal.
-'''
 import torch 
 import torch.nn.functional as F
 
 def conv3x3_bn(ci, co):
+  """ A 3x3 convolutional layer """
   return torch.nn.Sequential(torch.nn.Conv2d(ci, co, 3, padding=1), torch.nn.BatchNorm2d(co), torch.nn.ReLU(inplace=True))
 
 def encoder_conv(ci, co):
+  """ An encoder layer """
   return torch.nn.Sequential(torch.nn.MaxPool2d(2), conv3x3_bn(ci, co), conv3x3_bn(co, co))
 
 class deconv(torch.nn.Module):
+  """ A deconvolution layer """
   def __init__(self, ci, co):
     super(deconv, self).__init__()
     self.upsample = torch.nn.ConvTranspose2d(ci, co, 2, stride=2)
@@ -51,6 +54,7 @@ class deconv(torch.nn.Module):
     return x
 
 class UNet(torch.nn.Module):
+  """ Represents a 2D U-Net model"""
   def __init__(self, n_classes=1, in_ch=1):
     super().__init__()
 
@@ -87,6 +91,7 @@ class UNet(torch.nn.Module):
     x = self.out(x)
     return x
 
+# Set model parameters 
 def get_config(args):
     config_segm = {
         'batch_size'     : args.batch_size,
@@ -110,8 +115,17 @@ metrics    = {'acc'       : torchmetrics.Accuracy(task='binary').to('cuda'),
               'recall'    : torchmetrics.Recall(task='binary').to('cuda')}
 
 class Segmenter(pl.LightningModule):
+  """ Represents a training class for the purpose of uterus segmentation  """
   def __init__(self, *args):
     super().__init__()
+
+    if not args:
+      config_segm = {}
+      config_segm['model_name'] = 'unet'
+      config_segm['optimizer_name'] = 'adam'
+      config_segm['optimizer_lr'] = 0.1
+    else:
+      config_segm = args[0]
 
     # defining model
     self.model_name = config_segm['model_name']
@@ -134,19 +148,17 @@ class Segmenter(pl.LightningModule):
     y_hat  = self.model(X)
     y_prob = torch.sigmoid(y_hat)
 
-    # pos_weight = torch.tensor([config_segm['loss_pos_weight']]).float().to('cuda')
-    #loss = F.binary_cross_entropy_with_logits(y, y_prob, pos_weight=pos_weight)
-    # loss = F.binary_cross_entropy_with_logits(y_hat, y.float())#, pos_weight=pos_weight)
     loss = self.loss_fn(y_hat, y)
     
+    # Keep track of the loss and other metrics
     self.log(f"{nn_set}/loss", loss, on_step=False, on_epoch=True)
 
     for i, (metric_name, metric_fn) in enumerate(metrics.items()):
       score = metric_fn(y_prob, y.int())
       self.log(f'{nn_set}/{metric_name}', score, on_step=False, on_epoch=True)
 
+    # For visualization purposes, save a row of predictions every 10 epochs
     if nn_set == "val" and self.epoch % 10 == 0:
-      print(f'saving a row of images on epoch {self.epoch}')
       img = batch[0][0].cpu()
       gt = batch[1][0].cpu()
       pred = y_prob[0].cpu()
@@ -169,6 +181,7 @@ class Segmenter(pl.LightningModule):
     return {"test_loss": self.step(batch, "test")}
   
   def on_train_end(self):
+    # Log a validation table with scores and visualized predictions
     val_table = wandb.Table(columns=['Image', 'Ground truth', 'Prediction', 'F1 score'], data=self.val_table_data)
     wandb.log({f"{args.run_name} Validation Table": val_table})
 
@@ -189,22 +202,26 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=10, help="Amount of training epochs. Default: 10")
     parser.add_argument("--run_name", type=str, help="Name of the wandb run")
     parser.add_argument("--clahe", action="store_true", default=False, help="Whether to apply a CLAHE transformation to the images. Default False")
-    parser.add_argument("--augmentations", action="store_true", default=False, help="Whether to apply general augmentations to the images. Default False")
+    parser.add_argument("--gaussian_blur", action="store_true", default=False, help="Whether to apply a CLAHE transformation to the images. Default False")
+    parser.add_argument("--random_rotation", action="store_true", default=False, help="Whether to apply general augmentations to the images. Default False")
     parser.add_argument("--padding", action="store_true", default=False, help="Whether to apply a padding to the images. Default False")
-    # parser.add_argument("--loss_pos_weight", type=int, default=2, help=". Default 2")
+    parser.add_argument("--f", type=int, default=None, help="Fold for the cross validation")
 
     args = parser.parse_args()
 
     config_segm = get_config(args)
 
+    #  Initialize the logger
     wandb_logger = WandbLogger(log_model=True, project='MScUtiSeg', name=args.run_name)
     wandb_logger.experiment.config.update(config_segm)
 
     torch.manual_seed(42)
     torch.backends.cudnn.benchmark = True
 
-    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size, args.clahe, args.padding, args.augmentations)
+    # Load the data
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size, args.clahe, args.padding, args.random_rotation, args.gaussian_blur, args.f)
 
+    #  Initialize model parameters
     segmenter           = Segmenter(config_segm)
     logger              = wandb_logger
     checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor='val/f1', mode='max')
@@ -214,6 +231,9 @@ if __name__ == "__main__":
                                     logger=logger, callbacks=[checkpoint_callback, early_stop, SWA],
                                     default_root_dir=config_segm['bin'], deterministic=True,
                                     log_every_n_steps=1)
+    
+    # Start training
     trainer.fit(segmenter, 
                 train_dataloaders=train_dataloader, 
                 val_dataloaders=val_dataloader)
+    
