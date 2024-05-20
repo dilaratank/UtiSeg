@@ -200,6 +200,7 @@ if __name__ == "__main__":
     parser.add_argument("--gaussian_blur", action="store_true", default=False, help="Whether to apply a CLAHE transformation to the images. Default False")
     parser.add_argument("--random_rotation", action="store_true", default=False, help="Whether to apply general augmentations to the images. Default False")
     parser.add_argument("--padding", action="store_true", default=False, help="Whether to apply a padding to the images. Default False")
+    parser.add_argument("--f", type=int, default=None, help="Fold for the cross validation")
     # parser.add_argument("--loss_pos_weight", type=int, default=2, help=". Default 2")
 
     args = parser.parse_args()
@@ -212,7 +213,7 @@ if __name__ == "__main__":
     torch.manual_seed(42)
     torch.backends.cudnn.benchmark = True
 
-    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size, args.clahe, args.padding, args.random_rotation, args.gaussian_blur)
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, args.batch_size, args.img_size, args.clahe, args.padding, args.random_rotation, args.gaussian_blur, args.f)
 
     segmenter           = Segmenter(config_segm)
     logger              = wandb_logger

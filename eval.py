@@ -27,6 +27,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--padding", action="store_true", default=False, help="Whether to apply a padding to the images. Default False")
     parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--f", type=int, default=None, help="Fold for the cross validation")
 
     args = parser.parse_args()
 
@@ -42,7 +43,7 @@ if __name__ == "__main__":
 
     trainer = pl.Trainer(logger = wandb_logger)
 
-    _, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, 1, args.img_size, clahe=args.clahe, gaussian_blur=args.gaussian_blur, padding=args.padding)
+    _, val_dataloader, test_dataloader = get_dataloaders(args.imaging_type, 1, args.img_size, clahe=args.clahe, gaussian_blur=args.gaussian_blur, padding=args.padding, f=args.f)
 
     valid_metrics = trainer.validate(model, dataloaders=val_dataloader,  ckpt_path=model_checkpoint, verbose=True)
     test_metrics = trainer.test(model, dataloaders=test_dataloader, ckpt_path=model_checkpoint, verbose=True)

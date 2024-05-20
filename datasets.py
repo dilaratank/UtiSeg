@@ -25,16 +25,22 @@ class TVUSUterusSegmentationDataset(Dataset):
     def get_imgs_list(self, root_folder):
         image_paths = []
 
-        # Walk through the directory structure
-        for patient_number_folder in os.listdir(root_folder):
-            patient_folder_path = os.path.join(root_folder, patient_number_folder)
-            if os.path.isdir(patient_folder_path):
-                type_folder_path = os.path.join(patient_folder_path, self.data_type)
-                if os.path.exists(type_folder_path):
-                    # Iterate through files in data_type folder
-                    for file_name in os.listdir(type_folder_path):
-                        image_path = os.path.join(type_folder_path, file_name)
-                        image_paths.append(image_path)
+        if self.data_type == "ALL":
+            for file_name in os.listdir(root_folder):
+                image_path = os.path.join(root_folder, file_name)
+                image_paths.append(image_path)
+        
+        else:
+            # Walk through the directory structure
+            for patient_number_folder in os.listdir(root_folder):
+                patient_folder_path = os.path.join(root_folder, patient_number_folder)
+                if os.path.isdir(patient_folder_path):
+                    type_folder_path = os.path.join(patient_folder_path, self.data_type)
+                    if os.path.exists(type_folder_path):
+                        # Iterate through files in data_type folder
+                        for file_name in os.listdir(type_folder_path):
+                            image_path = os.path.join(type_folder_path, file_name)
+                            image_paths.append(image_path)
         
         return image_paths 
         

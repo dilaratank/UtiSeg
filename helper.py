@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from sklearn.model_selection import train_test_split
 
+### Code to split data on a patient level to train the normal U-Net ###
+
 data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
 
 def split_data(input_folder, train_folder, test_folder, validation_folder, train_ratio=0.7, test_ratio=0.2):
@@ -52,6 +54,9 @@ def split_data(input_folder, train_folder, test_folder, validation_folder, train
 # # Split data into train, test, and validation sets
 # split_data(input_folder, train_folder, test_folder, validation_folder)
 # print('done dividing train, test, and validation sets.')
+
+
+### Code to split the data on a patient level to perform cross validation, the split is done for each fold ###
 
 import os
 import shutil
@@ -103,24 +108,295 @@ def split_data_crossvalidation(folder_path, destination_folder_path):
 # split_data_crossvalidation("/home/sandbox/dtank/my-scratch/data/mask/UTISEG-DATA-ANNOTATED-MASK-ANONIEM/", "/home/sandbox/dtank/my-scratch/data/crossvalidation")
 # split_data_crossvalidation("/home/sandbox/dtank/my-scratch/data/original/UTISEG-DATA-ANONIEM/", "/home/sandbox/dtank/my-scratch/data/crossvalidation")
 
+
+### Code to throw every image type together for nnU-Net since it will perform 5-fold cross validation anyway ###
+
+# import os
+# import shutil
+
+# # Source folder containing original images
+# source_folder = '/home/sandbox/dtank/my-scratch/data/original/UTISEG-DATA-ANONIEM/'
+# #ANNOTATED-MASK
+
+# # Destination folder where images will be copied
+# destination_folder = '/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset003_3D/imagesTr/'
+
+# # Iterate through all folders in the source directory
+# for root, dirs, files in os.walk(source_folder):
+#     for dir_name in dirs:
+#         # Construct the path to the 'STILL' folder
+#         still_folder = os.path.join(root, dir_name, '3D')
+        
+#         # Check if the 'STILL' folder exists
+#         if os.path.isdir(still_folder):
+#             # Iterate through files in the 'STILL' folder
+#             for file_name in os.listdir(still_folder):
+#                 # Construct the source and destination paths for each file
+#                 source_file = os.path.join(still_folder, file_name)
+#                 destination_file = os.path.join(destination_folder, file_name)
+                
+#                 # Copy the file to the destination folder
+#                 shutil.copyfile(source_file, destination_file)
+#                 print(f"Copied: {source_file} to {destination_file}")
+
+
+### Code to generate a dataset.json for training nnU-net ###
+
+from typing import Tuple
+from batchgenerators.utilities.file_and_folder_operations import save_json, join
+
+def generate_dataset_json(output_folder: str,
+                          channel_names: dict,
+                          labels: dict,
+                          num_training_cases: int,
+                          file_ending: str,
+                          regions_class_order: Tuple[int, ...] = None,
+                          dataset_name: str = None, reference: str = None, release: str = None, license: str = None,
+                          description: str = None,
+                          overwrite_image_reader_writer: str = None, **kwargs):
+    """
+    Generates a dataset.json file in the output folder
+
+    channel_names:
+        Channel names must map the index to the name of the channel, example:
+        {
+            0: 'T1',
+            1: 'CT'
+        }
+        Note that the channel names may influence the normalization scheme!! Learn more in the documentation.
+
+    labels:
+        This will tell nnU-Net what labels to expect. Important: This will also determine whether you use region-based training or not.
+        Example regular labels:
+        {
+            'background': 0,
+            'left atrium': 1,
+            'some other label': 2
+        }
+        Example region-based training:
+        {
+            'background': 0,
+            'whole tumor': (1, 2, 3),
+            'tumor core': (2, 3),
+            'enhancing tumor': 3
+        }
+
+        Remember that nnU-Net expects consecutive values for labels! nnU-Net also expects 0 to be background!
+
+    num_training_cases: is used to double check all cases are there!
+
+    file_ending: needed for finding the files correctly. IMPORTANT! File endings must match between images and
+    segmentations!
+
+    dataset_name, reference, release, license, description: self-explanatory and not used by nnU-Net. Just for
+    completeness and as a reminder that these would be great!
+
+    overwrite_image_reader_writer: If you need a special IO class for your dataset you can derive it from
+    BaseReaderWriter, place it into nnunet.imageio and reference it here by name
+
+    kwargs: whatever you put here will be placed in the dataset.json as well
+
+    """
+    has_regions: bool = any([isinstance(i, (tuple, list)) and len(i) > 1 for i in labels.values()])
+    if has_regions:
+        assert regions_class_order is not None, f"You have defined regions but regions_class_order is not set. " \
+                                                f"You need that."
+    # channel names need strings as keys
+    keys = list(channel_names.keys())
+    for k in keys:
+        if not isinstance(k, str):
+            channel_names[str(k)] = channel_names[k]
+            del channel_names[k]
+
+    # labels need ints as values
+    for l in labels.keys():
+        value = labels[l]
+        if isinstance(value, (tuple, list)):
+            value = tuple([int(i) for i in value])
+            labels[l] = value
+        else:
+            labels[l] = int(labels[l])
+
+    dataset_json = {
+        'channel_names': channel_names,  # previously this was called 'modality'. I didn't like this so this is
+        # channel_names now. Live with it.
+        'labels': labels,
+        'numTraining': num_training_cases,
+        'file_ending': file_ending,
+    }
+
+    if dataset_name is not None:
+        dataset_json['name'] = dataset_name
+    if reference is not None:
+        dataset_json['reference'] = reference
+    if release is not None:
+        dataset_json['release'] = release
+    if license is not None:
+        dataset_json['licence'] = license
+    if description is not None:
+        dataset_json['description'] = description
+    if overwrite_image_reader_writer is not None:
+        dataset_json['overwrite_image_reader_writer'] = overwrite_image_reader_writer
+    if regions_class_order is not None:
+        dataset_json['regions_class_order'] = regions_class_order
+
+    dataset_json.update(kwargs)
+
+    save_json(dataset_json, join(output_folder, 'dataset.json'), sort_keys=False)
+
+
+
+# generate_dataset_json('/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset003_3D/',
+#                       {0: 'TVUS'},
+#                       {'background': 0, 'uterus': 1},
+#                       452,
+#                       '.png',
+#                       dataset_name='Dataset003_3D'
+#                       )
+
+
+### Code to rename how nnu-Net expects it ###
+
 import os
-from collections import defaultdict
 
-def count_image_types(root_dir):
-    image_types = defaultdict(int)
-    for root, dirs, files in os.walk(root_dir):
+def rename_files(folder_path, prefix, padding, extension):
+    files = sorted(os.listdir(folder_path))
+    index = 1
+    for filename in files:
+        new_filename = f"{prefix}{str(index).zfill(padding)}_0000{extension}"
+        old_filepath = os.path.join(folder_path, filename)
+        new_filepath = os.path.join(folder_path, new_filename)
+        os.rename(old_filepath, new_filepath)
+        index += 1
+
+# Function to rename files in masks folder
+def rename_masks(folder_path, prefix):
+    files = sorted(os.listdir(folder_path))
+    index = 1
+    for filename in files:
+        new_filename = f"{prefix}{str(index).zfill(3)}.png"
+        old_filepath = os.path.join(folder_path, filename)
+        new_filepath = os.path.join(folder_path, new_filename)
+        os.rename(old_filepath, new_filepath)
+        index += 1
+
+# Define folders and prefixes
+folders = [
+    ("/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset001_STILL/imagesTr/", "STILL_", 3, ".png", False),
+    ("/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset002_VIDEO/imagesTr/", "VIDEO_", 3, ".png", False),
+    ("/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset003_3D/imagesTr/", "3D_", 3, ".png", False),
+    ("/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset001_STILL/labelsTr/", "STILL_", 3, ".png", True),
+    ("/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset002_VIDEO/labelsTr/", "VIDEO_", 3, ".png", True),
+    ("/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset003_3D/labelsTr/", "3D_", 3, ".png", True)
+]
+
+# # Rename files in each folder
+# for folder_path, prefix, padding, extension, mask in folders:
+#     if os.path.exists(folder_path):
+#         if mask:  # If it's a mask folder
+#             rename_masks(folder_path, prefix)
+#         else:
+#             rename_files(folder_path, prefix, padding, extension)
+#     else:
+#         print(f"Folder '{folder_path}' does not exist.")
+
+
+### Normalize images ###
+
+# import cv2
+# import numpy as np
+# import pandas as pd
+
+# from skimage import io
+
+# from skimage import img_as_ubyte
+
+# import os
+# import cv2
+# from skimage import io
+
+# # Path to the folder containing the images
+# folder_path = '/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset003_3D/labelsTr/'
+
+# # Threshold value
+# threshold = 0
+
+# #Iterate over each file in the folder
+# for filename in os.listdir(folder_path):
+#     # Check if the file is a PNG image
+#     if filename.endswith('.png'):
+#         # Read the image
+#         image_path = os.path.join(folder_path, filename)
+#         seg = io.imread(image_path)
+
+#         # Apply thresholding
+#         seg[seg > threshold] = 1
+
+#         # Save the processed image back to the same file
+#         io.imsave(image_path, img_as_ubyte(seg))
+
+# print("Processing complete.")
+
+
+# image = io.imread('/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset003_3D/labelsTr/3D_122.png')
+
+# io.imshow(image)
+# io.show()
+
+# print(image.shape)
+# print(image.ndim)
+# print(np.sort(pd.unique(image.ravel())))
+
+import os
+import shutil
+import random
+
+def move_folders(source_folder, destination_folder, num_folders_to_move):
+    # List all folders in the source folder
+    folders = [folder for folder in os.listdir(source_folder) if os.path.isdir(os.path.join(source_folder, folder))]
+    
+    # Shuffle the list of folders to ensure randomness
+    random.shuffle(folders)
+    
+    # Take the first num_folders_to_move folders and move them to the destination folder
+    folders_to_move = folders[:num_folders_to_move]
+    for folder in folders_to_move:
+        source_path = os.path.join(source_folder, folder)
+        destination_path = os.path.join(destination_folder, folder)
+        shutil.move(source_path, destination_path)
+        print(f"Moved '{folder}' to '{destination_folder}'")
+
+# Example usage:
+source_folder = '/home/sandbox/dtank/my-scratch/data/mask/conv/'
+destination_folder = '/home/sandbox/dtank/my-scratch/data/crossvalidation/new/fold_5/mask/validation/'
+num_folders_to_move = 11
+
+# move_folders(source_folder, destination_folder, num_folders_to_move)
+
+import os
+
+def count_images(folder_path):
+    total_images = 0
+    for root, dirs, files in os.walk(folder_path):
         for file in files:
-            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
-                _, ext = os.path.splitext(file)
-                image_types[ext.lower()] += 1
-    return image_types
+            if file.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+                total_images += 1
+    return total_images
 
-def main():
-    root_folder = '/home/sandbox/dtank/my-scratch/data/original/validation/'  # Update this with your actual folder path
-    for patient_folder in os.listdir(root_folder):
-        if os.path.isdir(os.path.join(root_folder, patient_folder)):
-            images_count = count_image_types(os.path.join(root_folder, patient_folder, '3D'))
-            print(f"Patient {patient_folder}: {images_count}")
+folder_path_mask = '/home/sandbox/dtank/my-scratch/data/crossvalidation/new/fold_3/mask/'
+folder_path_original = '/home/sandbox/dtank/my-scratch/data/crossvalidation/new/fold_3/original/'   # Replace this with the path to your overarching folder
+total_images_mask = count_images(folder_path_mask)
+total_images_original = count_images(folder_path_original)
+print("Total number of images (mask):", total_images_mask)
+print("Total number of images (original):", total_images_original)
 
-if __name__ == "__main__":
-    main()
+
+
+
+### Code to reverse threshold ###
+
+# reverse threshold
+# image[image > 0] = 255
+# io.imsave('/home/sandbox/dtank/my-scratch/data/nnunet/nnUNet_raw/Dataset001_STILL/labelsTr/STILL_122-check.png', image)
+
+

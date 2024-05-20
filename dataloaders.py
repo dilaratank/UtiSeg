@@ -33,7 +33,12 @@ class NonRandomHorizontalFlip:
 train_trans = transforms.Compose([transforms.Grayscale()])
 val_test_trans = transforms.Compose([transforms.Grayscale()])
 
-def get_dataloaders(imaging_type, batch_size, img_size, clahe=False, padding=False, random_rotation=False, gaussian_blur=False):
+def get_dataloaders(imaging_type, batch_size, img_size, clahe=False, padding=False, random_rotation=False, gaussian_blur=False, f=None):
+
+    if f != None:
+        data_root_folder = f"/home/sandbox/dtank/my-scratch/data/crossvalidation/new/fold_{f}/"
+    else:
+        data_root_folder = '/home/sandbox/dtank/my-scratch/data/'
     
     if gaussian_blur:
         train_trans.transforms.append(transforms.GaussianBlur(5))
@@ -48,9 +53,9 @@ def get_dataloaders(imaging_type, batch_size, img_size, clahe=False, padding=Fal
     if imaging_type == "STILL":
         # STILL #
         # Datasets
-        STILL_train_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/train/', data_root_folder+'mask/train/', 'STILL', resize=img_size, clahe=clahe, padding=padding, transform=train_trans)
-        STILL_test_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/test/', data_root_folder+'mask/test/', 'STILL', resize=img_size, clahe=clahe, padding=padding, transform=val_test_trans)
-        STILL_val_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/validation/', data_root_folder+'mask/validation/', 'STILL', resize=img_size, clahe=clahe, padding=padding, transform=val_test_trans)
+        STILL_train_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/train', data_root_folder+'mask/train', 'STILL', resize=img_size, clahe=clahe, padding=padding, transform=train_trans)
+        STILL_test_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/test', data_root_folder+'mask/test', 'STILL', resize=img_size, clahe=clahe, padding=padding, transform=val_test_trans)
+        STILL_val_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/validation', data_root_folder+'mask/validation', 'STILL', resize=img_size, clahe=clahe, padding=padding, transform=val_test_trans)
 
         # Dataloaders
         STILL_train_dataloader = DataLoader(STILL_train_dataset, batch_size=batch_size, shuffle=True)
@@ -83,3 +88,16 @@ def get_dataloaders(imaging_type, batch_size, img_size, clahe=False, padding=Fal
         VOLUME_test_dataloader = DataLoader(VOLUME_test_dataset, batch_size=batch_size, shuffle=True)
         VOLUME_val_dataloader = DataLoader(VOLUME_val_dataset, batch_size=batch_size, shuffle=True)
         return VOLUME_train_dataloader, VOLUME_val_dataloader, VOLUME_test_dataloader
+    
+    elif imaging_type == "ALL":
+        # ALL Imaging Types #
+        # Datasets
+        ALL_train_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/all_train', data_root_folder+'mask/all_train', 'ALL', resize=img_size, clahe=clahe, padding=padding, transform=train_trans)
+        ALL_test_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/all_test', data_root_folder+'mask/all_test', 'ALL', resize=img_size, clahe=clahe, padding=padding, transform=val_test_trans)
+        ALL_val_dataset = TVUSUterusSegmentationDataset(data_root_folder+'original/all_validation', data_root_folder+'mask/all_validation', 'ALL', resize=img_size, clahe=clahe, padding=padding, transform=val_test_trans)
+
+        # Dataloaders
+        ALL_train_dataloader = DataLoader(ALL_train_dataset, batch_size=batch_size, shuffle=True)
+        ALL_test_dataloader = DataLoader(ALL_test_dataset, batch_size=batch_size, shuffle=True)
+        ALL_val_dataloader = DataLoader(ALL_val_dataset, batch_size=batch_size, shuffle=True)
+        return ALL_train_dataloader, ALL_test_dataloader, ALL_val_dataloader 
